@@ -16,14 +16,21 @@ export async function POST(req: Request) {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Check if this is the first registered user
+    const userCount = await db.user.count();
+    const role = userCount === 0 ? 'ADMIN' : 'USER';
+    const plan = userCount === 0 ? 'ENTERPRISE' : 'FREE';
+    const credits = userCount === 0 ? 100000 : 1000;
+
     const user = await db.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role: 'USER',
-        plan: 'FREE',
-        credits: 1000,
+        role,
+        plan,
+        credits,
       },
     });
 
