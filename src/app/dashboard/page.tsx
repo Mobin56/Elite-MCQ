@@ -18,6 +18,8 @@ export default function Dashboard() {
   const [uploadError, setUploadError] = useState('');
   const [documentId, setDocumentId] = useState('');
   const [docMeta, setDocMeta] = useState<any>(null);
+  const [libsLoaded, setLibsLoaded] = useState(false);
+  const [parseStatus, setParseStatus] = useState('');
 
   // Settings states
   const [language, setLanguage] = useState('Bangla');
@@ -139,6 +141,34 @@ export default function Dashboard() {
     }
   };
 
+  // Load pdf.js and mammoth.js dynamically
+  useEffect(() => {
+    const pdfScript = document.createElement('script');
+    pdfScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
+    pdfScript.async = true;
+    document.body.appendChild(pdfScript);
+
+    const mammothScript = document.createElement('script');
+    mammothScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js';
+    mammothScript.async = true;
+    document.body.appendChild(mammothScript);
+
+    const checkLoaded = setInterval(() => {
+      if ((window as any)['pdfjs-dist/build/pdf'] && (window as any).mammoth) {
+        setLibsLoaded(true);
+        clearInterval(checkLoaded);
+      }
+    }, 500);
+
+    return () => {
+      clearInterval(checkLoaded);
+      try {
+        document.body.removeChild(pdfScript);
+        document.body.removeChild(mammothScript);
+      } catch (e) {}
+    };
+  }, []);
+
   const handleFileSelected = async (selectedFile: File) => {
     const ext = selectedFile.name.split('.').pop()?.toLowerCase();
     if (ext !== 'pdf' && ext !== 'docx' && ext !== 'doc') {
@@ -146,32 +176,94 @@ export default function Dashboard() {
       return;
     }
 
+    if (!libsLoaded) {
+      setUploadError('Parsing libraries are still loading in your browser. Please wait a second and try again.');
+      return;
+    }
+
     setFile(selectedFile);
     setUploadError('');
     setUploading(true);
+    setParseStatus('Reading file locally...');
 
-    const formData = new FormData();
-    formData.append('file', selectedFile);
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setUploadError('Failed to read file.');
+      setUploading(false);
+      setFile(null);
+    };
 
-    try {
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Parsing failed.');
+    reader.onload = async (event) => {
+      const arrayBuffer = event.target?.result as ArrayBuffer;
+      if (!arrayBuffer) {
+        setUploadError('File is empty.');
+        setUploading(false);
+        setFile(null);
+        return;
       }
 
-      setDocumentId(data.documentId);
-      setDocMeta(data);
-    } catch (err: any) {
-      setUploadError(err.message || 'Upload processing failed.');
-      setFile(null);
-    } finally {
-      setUploading(false);
-    }
+      try {
+        let extractedText = '';
+        let pageCount = 1;
+
+        if (ext === 'pdf') {
+          setParseStatus('Initializing PDF parser...');
+          const pdfjsLib = (window as any)['pdfjs-dist/build/pdf'];
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+          const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+          const pdf = await loadingTask.promise;
+          pageCount = pdf.numPages;
+
+          let parsedText = '';
+          for (let i = 1; i <= pageCount; i++) {
+            setParseStatus(`Extracting text locally: Page ${i} of ${pageCount}...`);
+            const page = await pdf.getPage(i);
+            const tokenizedText = await page.getTextContent();
+            const pageText = tokenizedText.items.map((token: any) => token.str).join(' ');
+            parsedText += pageText + '\n';
+          }
+          extractedText = parsedText;
+        } else {
+          setParseStatus('Extracting DOCX text locally...');
+          const mammoth = (window as any).mammoth;
+          const result = await mammoth.extractRawText({ arrayBuffer });
+          extractedText = result.value || '';
+          
+          const wordCount = extractedText.split(/\s+/).filter(Boolean).length;
+          pageCount = Math.max(1, Math.ceil(wordCount / 400));
+        }
+
+        setParseStatus('Uploading extracted text to database...');
+
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: selectedFile.name,
+            fileType: ext.toUpperCase(),
+            extractedText: extractedText,
+            fileSize: `${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB`,
+            pages: pageCount,
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Parsing upload failed.');
+        }
+
+        setDocumentId(data.documentId);
+        setDocMeta(data);
+      } catch (err: any) {
+        setUploadError(err.message || 'Local text extraction failed.');
+        setFile(null);
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    reader.readAsArrayBuffer(selectedFile);
   };
 
   // Ratio Validation
@@ -520,7 +612,7 @@ export default function Dashboard() {
                 {uploading && (
                   <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-3 rounded-3xl">
                     <RefreshCw className="w-8 h-8 text-violet-500 animate-spin" />
-                    <span className="text-sm font-medium text-gray-300">Extracting book content...</span>
+                    <span className="text-sm font-medium text-gray-300">{parseStatus || 'Extracting book content...'}</span>
                   </div>
                 )}
 
