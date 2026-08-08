@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "db:sqlite": "node scripts/use-sqlite.js",
+    "db:postgres": "node scripts/use-postgres.js"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",
