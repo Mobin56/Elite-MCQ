@@ -29,14 +29,40 @@ export async function callLLM(prompt: string, responseJson = false): Promise<str
   }
 
   const normalizedProvider = provider.toLowerCase();
+  
+  let attempts = 0;
+  const maxAttempts = 5;
+  let delay = 4000; // Start with 4 seconds delay on rate limit
 
-  if (normalizedProvider === 'gemini') {
-    return callGemini(model, apiKey, prompt, responseJson);
-  } else if (normalizedProvider === 'openai') {
-    return callOpenAI(model, apiKey, prompt, responseJson);
-  } else {
-    throw new Error(`Unsupported AI_PROVIDER: ${provider}. Supported options are 'gemini' or 'openai'.`);
+  while (attempts < maxAttempts) {
+    try {
+      if (normalizedProvider === 'gemini') {
+        return await callGemini(model, apiKey, prompt, responseJson);
+      } else if (normalizedProvider === 'openai') {
+        return await callOpenAI(model, apiKey, prompt, responseJson);
+      } else {
+        throw new Error(`Unsupported AI_PROVIDER: ${provider}. Supported options are 'gemini' or 'openai'.`);
+      }
+    } catch (error: any) {
+      attempts++;
+      const errorMessage = error.message || '';
+      const isRateLimit = 
+        errorMessage.includes('429') || 
+        errorMessage.toLowerCase().includes('quota') || 
+        errorMessage.toLowerCase().includes('limit') ||
+        errorMessage.toLowerCase().includes('resource_exhausted');
+      
+      if (isRateLimit && attempts < maxAttempts) {
+        console.warn(`[AI Provider] Rate limit or Quota error hit (Attempt ${attempts}/${maxAttempts}). Retrying in ${delay}ms... Error: ${errorMessage}`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff (4s -> 8s -> 16s -> 32s)
+      } else {
+        throw error;
+      }
+    }
   }
+  
+  throw new Error('Failed to get response from AI Provider after multiple retries due to rate limit/quota.');
 }
 
 async function callGemini(model: string, apiKey: string, prompt: string, responseJson: boolean): Promise<string> {

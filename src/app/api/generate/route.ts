@@ -188,6 +188,8 @@ async function runBackgroundMCQGeneration(
         } catch (err) {
           console.error(`Error in Batch ${b}, retry ${retries}:`, err);
           retries++;
+          // Wait 6 seconds before retrying to allow rate limit to clear
+          await new Promise((resolve) => setTimeout(resolve, 6000));
         }
       }
 
@@ -219,6 +221,9 @@ async function runBackgroundMCQGeneration(
           where: { id: batchRecord.id },
           data: { status: 'COMPLETED' },
         });
+
+        // Wait 2 seconds between successful batches to prevent rate limits
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       } else {
         await db.generationBatch.update({
           where: { id: batchRecord.id },
