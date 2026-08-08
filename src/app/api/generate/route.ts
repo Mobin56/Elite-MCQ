@@ -99,9 +99,8 @@ async function runBackgroundMCQGeneration(
       },
     });
 
-    // 3. Batch Calculation
-    // We will generate in batches of 25 to ensure the LLM outputs stable sized arrays and fits token limits.
-    const batchSize = 25;
+    // We will generate in batches of 50 to minimize API requests and conserve daily free tier quota.
+    const batchSize = 50;
     const totalBatches = Math.ceil(totalQty / batchSize);
     
     // Create batch logs in database
